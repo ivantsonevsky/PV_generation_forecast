@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-PV output forecast from the ECMWF IFS (HRES) sunshine duration forecast.
+PV output forecast from the ECMWF IFS (Control) sunshine duration forecast.
 
 Data
-  IFS HRES from MARS (via the ECMWF Web API, ~/.ecmwfapirc):
+  IFS Control from MARS (via the ECMWF Web API, ~/.ecmwfapirc):
     sund (param 189) - sunshine duration, accumulated from the start of the run [s]
     2t   (param 167) - 2 m temperature [K], used for the module temperature
     lcc, mcc, hcc (params 186/187/188) - low, medium and high cloud cover [0-1]
     tcc  (param 164) - total cloud cover [0-1], used to set the layer overlap
-  Steps are hourly up to +90 h (HRES has hourly output there) and 3-hourly
+  Steps are hourly up to +90 h (Control forecast) has hourly output there) and 3-hourly
   after that, so a 3-day forecast is fully hourly.
 
 Method (per forecast interval, evaluated every 5 minutes inside it)
@@ -75,8 +75,8 @@ ARRAYS = [
 DEFAULT_TILT, DEFAULT_AZIMUTH = 30.0, 180.0
 MAX_ARRAYS = 7              # one colour each in the plot
 
-MARS_LATENCY_H = 7          # HRES 00/12 UTC runs are in MARS ~6-7 h after base time
-HOURLY_MAX_STEP = 90        # HRES has hourly steps up to +90 h, 3-hourly up to +144 h
+MARS_LATENCY_H = 7          # Control FC 00/12 UTC runs are in MARS ~6-7 h after base time
+HOURLY_MAX_STEP = 90        # Control FC has hourly steps up to +90 h, 3-hourly up to +144 h
 SUBSTEP_MIN = 5
 SUNSHINE_DNI = 120.0        # WMO sunshine threshold [W/m2]
 CACHE_DIR = Path(__file__).resolve().parent / "ifs_cache"
@@ -84,7 +84,7 @@ CACHE_DIR = Path(__file__).resolve().parent / "ifs_cache"
 
 # ----------------------------------------------------------------- IFS data
 def candidate_runs(now_utc):
-    """Most recent HRES runs that should already be in MARS, newest first."""
+    """Most recent Control FC runs that should already be in MARS, newest first."""
     t = now_utc - dt.timedelta(hours=MARS_LATENCY_H)
     base = t.replace(hour=12 if t.hour >= 12 else 0, minute=0, second=0, microsecond=0)
     return [base, base - dt.timedelta(hours=12)]
@@ -387,7 +387,7 @@ def plot(hourly, daily, base, a, arrays, out):
     loc = f"{abs(a.lat):.2f}°{'N' if a.lat >= 0 else 'S'} {abs(a.lon):.2f}°{'E' if a.lon >= 0 else 'W'}"
     fig.suptitle(f"PV forecast  {loc}  |  {arr_txt}",
                  x=0.06, ha="left", fontsize=13, fontweight="bold")
-    fig.text(0.06, 0.935, f"ECMWF IFS HRES {base:%Y-%m-%d %H} UTC run, sunshine duration and low/medium/high "
+    fig.text(0.06, 0.935, f"ECMWF IFS Control {base:%Y-%m-%d %H} UTC run, sunshine duration and low/medium/high "
              f"cloud cover (hourly steps); "
              f"times in {a.tz}", fontsize=9, color=ink2)
     fig.subplots_adjust(left=0.075, right=0.98, top=0.87 - 0.045 * (rows - 1), bottom=0.08)
@@ -492,7 +492,7 @@ def main():
         max_step = int(np.ceil((end - pd.Timestamp(base)) / pd.Timedelta(hours=1)))
         max_step = min(144, max_step + (-max_step) % (3 if max_step > HOURLY_MAX_STEP else 1))
         try:
-            print(f"IFS HRES {base:%Y-%m-%d %H} UTC, steps 0-{max_step} h ...")
+            print(f"IFS Control {base:%Y-%m-%d %H} UTC, steps 0-{max_step} h ...")
             times, ifs = retrieve_ifs(base, a.lat, a.lon, max_step)
             break
         except Exception as e:  # run not yet in MARS -> try the previous one
