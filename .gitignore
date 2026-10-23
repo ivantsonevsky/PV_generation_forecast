@@ -13,6 +13,9 @@ __pycache__/
 # macOS
 .DS_Store
 
+# Old versions
+pv_forecast_ifs_*.py
+
 # Credentials, never commit
 .ecmwfapirc
 *.key
