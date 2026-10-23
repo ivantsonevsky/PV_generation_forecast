@@ -1,0 +1,20 @@
+cat > .gitignore << 'EOF'
+# Downloaded IFS data (large, regenerated on demand)
+ifs_cache/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# Credentials, never commit
+.ecmwfapirc
+*.key
+.env
+EOF
