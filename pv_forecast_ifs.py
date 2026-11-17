@@ -16,11 +16,18 @@ Method (per forecast interval, evaluated every 5 minutes inside it)
   2. Sunshine fraction f = IFS sunshine seconds / seconds in which the sun
      *could* shine. WMO sunshine means DNI > 120 W/m2, so only the minutes with
      clear-sky DNI above 120 W/m2 count as possible sunshine.
-  3. All-sky irradiance: beam = f * DNI_cs,
+  3. All-sky irradiance: beam = k_beam(f) * f * DNI_cs,
      diffuse = f * DHI_cs + (1 - f) * T_cloud * GHI_cs
+     k_beam(f) = 1 - (1 - K) * 4 f (1 - f) lowers the beam only in partly sunny
+     intervals (sunshine counts DNI > 120 W/m2, but those minutes often have thin
+     cloud or haze and less than clear-sky DNI). It is 1 for overcast (f=0) and
+     clear (f=1) intervals and K at f=0.5; K is --k-beam (default 0.85, 1 = off).
      T_cloud is the light that gets through the clouds hiding the sun. Each
      layer passes a fraction of the clear-sky GHI (low ~25 %, medium ~45 %,
-     high/cirrus ~75 %); with random overlap of the IFS low/medium/high cloud
+     high/cirrus ~75 %, all times --trans-scale, default 0.9); thick cloud blocks
+     more at low sun, so T_cloud is also multiplied by cos(zenith)**zenith_exp
+     (--zenith-exp, default 0.3). Both were fitted to 23-25 Oct 2026 actuals.
+     With random overlap of the IFS low/medium/high cloud
      cover, T_cloud is the mean transmission given that at least one layer
      covers the sun:
        T_cloud = (through - clear) / (1 - clear)
@@ -78,6 +85,7 @@ MAX_ARRAYS = 7              # one colour each in the plot
 MARS_LATENCY_H = 7          # Control FC 00/12 UTC runs are in MARS ~6-7 h after base time
 HOURLY_MAX_STEP = 90        # Control FC has hourly steps up to +90 h, 3-hourly up to +144 h
 SUBSTEP_MIN = 5
+KBEAM_DEFAULT = 0.85        # partly sunny beam factor, see pv_forecast()
 SUNSHINE_DNI = 120.0        # WMO sunshine threshold [W/m2]
 CACHE_DIR = Path(__file__).resolve().parent / "ifs_cache"
 
@@ -179,13 +187,14 @@ def plane_of_array(dni, dhi, ghi, zenith, sun_az, tilt, azimuth, albedo):
 CLOUD_TRANSMISSION = {"lcc": 0.25, "mcc": 0.45, "hcc": 0.75}
 
 
-def cloud_transmission(cover, k_overcast, tcc=None):
+def cloud_transmission(cover, k_overcast, tcc=None, scale=1.0):
     """Mean fraction of the clear-sky GHI that reaches the ground while the sun
     is hidden. The layer covers set the transmission; tcc (if given) sets how
     much the layers overlap (random overlap if tcc is None)."""
     layers = list(CLOUD_TRANSMISSION)
     c = np.stack([np.clip(cover[l], 0, 1) for l in layers]).astype(float)
-    t = np.array([CLOUD_TRANSMISSION[l] for l in layers], dtype=float)[:, None] * np.ones_like(c)
+    t = np.clip(np.array([CLOUD_TRANSMISSION[l] for l in layers], dtype=float)[:, None]
+                * scale, 0, 1) * np.ones_like(c)
 
     through = np.prod(1 - c + c * t, axis=0)      # random overlap
     clear = np.prod(1 - c, axis=0)
@@ -240,10 +249,15 @@ def pv_forecast(times, ifs, arrays, a):
     at_sub = lambda v: np.interp(sub.asi8, times.asi8, v)  # noqa: E731
     cover = {layer: at_sub(ifs[layer]) for layer in CLOUD_TRANSMISSION}
     tcc = None if a.no_tcc else np.clip(at_sub(ifs["tcc"]), 0, 1)
-    t_cloud = cloud_transmission(cover, a.k_overcast, tcc)
+    t_cloud = cloud_transmission(cover, a.k_overcast, tcc, a.trans_scale)
+    # thick cloud blocks more at low sun (longer path through the cloud)
+    cosz = np.clip(np.cos(np.radians(zen)), 0, 1)
+    t_cloud = np.clip(t_cloud * cosz ** a.zenith_exp, 0, 1)
     tair = at_sub(ifs["t2m"])
 
-    dni = f * dni_cs
+    # beam reduction only on partly sunny intervals: none at f=0 or f=1, largest at f=0.5
+    k_beam = 1 - (1 - a.k_beam) * 4 * f * (1 - f)
+    dni = k_beam * f * dni_cs
     dhi = f * dhi_cs + (1 - f) * t_cloud * ghi_cs
     ghi = dni * np.cos(np.radians(zen)) + dhi
 
@@ -425,6 +439,13 @@ def parse_args():
     p.add_argument("--linke", type=float, default=3.0, help="Linke turbidity for clear sky (2 clean - 5 hazy)")
     p.add_argument("--k-overcast", type=float, default=0.3,
                    help="overcast GHI as fraction of clear-sky GHI when IFS has no cloud in any layer")
+    p.add_argument("--k-beam", type=float, default=KBEAM_DEFAULT,
+                   help="fraction of clear-sky DNI reached when the sunshine fraction is 0.5 (partly sunny); "
+                        "no effect on fully clear or overcast intervals; 1 = off")
+    p.add_argument("--trans-scale", type=float, default=0.9,
+                   help="multiplier on the lcc/mcc/hcc transmissions (<1 = darker clouds); 1 = off")
+    p.add_argument("--zenith-exp", type=float, default=0.3,
+                   help="cloud transmission is multiplied by cos(zenith)**this; 0 = off")
     p.add_argument("--no-tcc", action="store_true",
                    help="ignore IFS total cloud cover and assume random overlap of the layers")
     p.add_argument("--out", default="pv_forecast.png", help="plot file")

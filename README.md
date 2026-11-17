@@ -47,14 +47,23 @@ For each forecast interval, evaluated every 5 minutes:
 2. **Sunshine fraction `f`.** IFS sunshine seconds divided by the seconds in which the
    sun could shine, i.e. where clear-sky DNI > 120 W/m² (the WMO threshold).
 3. **All-sky irradiance.**
-   - beam = `f` · DNI<sub>cs</sub>
+   - beam = `k_beam(f)` · `f` · DNI<sub>cs</sub>
    - diffuse = `f` · DHI<sub>cs</sub> + (1 − `f`) · `T_cloud` · GHI<sub>cs</sub>
+
+   `k_beam(f)` = 1 − (1 − `K`) · 4 `f` (1 − `f`) lowers the beam only in partly sunny
+   intervals. Sunshine counts every minute with DNI > 120 W/m², but such minutes often
+   have thin cloud or haze and so less than clear-sky DNI. `k_beam` is 1 for overcast
+   (`f` = 0) and clear (`f` = 1) intervals and equals `K` (`--k-beam`, default 0.85) at
+   `f` = 0.5.
 4. **Cloud transmission `T_cloud`.** Each layer lets through a fixed share of the
-   clear-sky GHI (low 25 %, medium 45 %, high 75 %). The layers are combined with an
+   clear-sky GHI (low 25 %, medium 45 %, high 75 %), multiplied by `--trans-scale`
+   (default 0.9). The layers are combined with an
    overlap that blends random and maximum overlap so that the clear fraction matches
    `1 − tcc`. Stacked layers mean more clear sky and thicker cloud, hence a lower
    `T_cloud`. With almost no cloud, the cover-weighted mean of the layer
-   transmissions is used; with none at all, `--k-overcast` (0.3).
+   transmissions is used; with none at all, `--k-overcast` (0.3). Finally `T_cloud` is
+   multiplied by cos(zenith)<sup>`--zenith-exp`</sup> (default 0.3), because thick cloud
+   blocks more light at low sun, when the path through it is longer.
 5. **Per array.** Plane-of-array irradiance (isotropic sky, ground albedo, ASHRAE
    incidence-angle losses), NOCT cell temperature, PVWatts-style DC power, system
    losses and inverter efficiency.
@@ -116,6 +125,9 @@ are supported.
 | `--albedo` | 0.2 | Ground reflectance |
 | `--linke` | 3.0 | Linke turbidity (2 clean to 5 hazy) |
 | `--k-overcast` | 0.3 | Overcast GHI fraction when no layer has cloud |
+| `--k-beam` | 0.85 | Fraction of clear-sky DNI reached when the sunshine fraction is 0.5 (partly sunny). No effect on fully clear or overcast intervals; 1 = off |
+| `--trans-scale` | 0.9 | Multiplier on the low / medium / high cloud transmissions (below 1 = darker clouds); 1 = off |
+| `--zenith-exp` | 0.3 | Cloud transmission is multiplied by cos(zenith) to this power; 0 = off |
 | `--no-tcc` | off | Ignore `tcc`, assume random layer overlap |
 | `--out`, `--csv` | `pv_forecast.png`, `pv_forecast_hourly.csv` | Output files |
 | `--show` | off | Also open the plot window |
@@ -174,9 +186,13 @@ has a minimal environment.
 
 ## Notes and limitations
 
-- The model has no per-site calibration. The cloud transmissions (0.25 / 0.45 / 0.75),
-  `--losses` and `--linke` are reasonable defaults, and fitting them against measured
-  generation would improve it.
+- The model has little per-site calibration. `--trans-scale` (0.9) and `--zenith-exp`
+  (0.3) were fitted to measured generation on only three days (23-25 Oct 2026: two
+  overcast, one clear), so they are a first estimate; the two cloudy days cannot
+  separate the scale from the sun-angle effect. `--k-beam` (0.85) is a placeholder,
+  because those days contained no partly sunny intervals. `--losses` and `--linke`
+  are reasonable defaults. Fitting all of them against more measured generation,
+  especially on mixed sun and cloud days, would improve the model.
 - Sunshine duration comes from a 0.1° grid point nearest to the site, so very local
   effects (shading, hills) are not captured.
 - Only the nearest grid point is used, with no interpolation between cells.
