@@ -16,6 +16,10 @@ __pycache__/
 # Old versions
 pv_forecast_ifs_*.py
 
+# PNG and CSV
+*.png
+*.csv
+
 # Credentials, never commit
 .ecmwfapirc
 *.key

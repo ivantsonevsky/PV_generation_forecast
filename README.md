@@ -1,14 +1,16 @@
 # PV generation forecast from ECMWF IFS
 
 A 3-day forecast of AC output for a home PV system, built from the ECMWF IFS HRES
-**sunshine duration** and **low / medium / high cloud cover** forecasts. It produces a
+**sunshine duration** and **low / medium / high cloud cover** forecasts, together with
+the 2 m temperature and 10 m wind forecasts shown alongside. It produces a
 plot, an hourly CSV table and a console summary, and can publish the plot to GitHub so
 it can be shown in phone widgets.
 
 ![PV forecast](pv_forecast.png)
 
 *Example output (IFS run 2026-10-23 00 UTC): hourly power per array and in total, the
-IFS cloud-cover layers, and daily energy compared with the clear-sky potential.*
+IFS cloud-cover layers, and daily energy compared with the clear-sky potential. This
+image predates the temperature and wind panel; regenerate it to show the current layout.*
 
 ## Contents
 
@@ -25,12 +27,15 @@ IFS cloud-cover layers, and daily energy compared with the clear-sky potential.*
 ### Data
 
 IFS HRES surface fields are fetched from MARS through the ECMWF Web API for a small
-box (±0.2°, 0.1° grid) around the site, and cached as NetCDF in `ifs_cache/`:
+box (±0.2°, 0.1° grid) around the site, and cached as NetCDF in `ifs_cache/` (files
+from before the wind fields were added, named `..._tcc.nc`, are ignored and can be
+deleted):
 
 | Parameter | Field | Used for |
 |---|---|---|
 | 189 `sund` | Sunshine duration (accumulated) | Sunshine fraction |
-| 167 `2t` | 2 m temperature | Cell temperature |
+| 167 `2t` | 2 m temperature | Cell temperature; plotted |
+| 165 / 166 `10u` `10v` | 10 m wind components | Wind barbs in the plot |
 | 186 / 187 / 188 `lcc` `mcc` `hcc` | Low / medium / high cloud cover | Cloud transmission |
 | 164 `tcc` | Total cloud cover | Overlap of the cloud layers |
 
@@ -74,6 +79,15 @@ For each forecast interval, evaluated every 5 minutes:
 
 - **Hourly PV output**: total (blue), each array, and the clear-sky potential (dashed).
 - **IFS cloud cover**: low / medium / high layers, darker means more cloud.
+- **IFS temperature and wind**: 2 m temperature as a line (axis labelled every 2 °C,
+  dotted line at 0 °C when the forecast crosses freezing), and the 10 m wind as barbs
+  above it, one every 3 hours. Each barb points into the wind (the direction it comes
+  from) and its speed is in m/s: a half barb is 2.5 m/s, a full barb 5 m/s and a
+  pennant 25 m/s, added up as usual (for example one full plus one half barb is
+  7.5 m/s).
+- Thin dashed vertical lines mark 06:00, 12:00 and 18:00 in the three upper panels;
+  midnight has a solid line. Hour labels are shown on the time axis under the cloud
+  strip and under the temperature and wind panel.
 - **Daily PV energy**: kWh per array and in total, with the clear-sky potential
   outlined. The label under each day is the IFS sunshine duration.
 
@@ -147,6 +161,8 @@ per-array energy, mean cloud cover, sunshine hours) and the total.
 | `clearsky_kw` | Total AC power under clear sky |
 | `ghi_wm2` | All-sky global horizontal irradiance |
 | `t2m_c` | 2 m air temperature |
+| `wind_ms` | 10 m wind speed [m/s] |
+| `u10_ms`, `v10_ms` | 10 m wind components, eastward and northward [m/s] |
 | `lcc_pct`, `mcc_pct`, `hcc_pct` | Low / medium / high cloud cover |
 | `cloud_trans` | Effective cloud transmission `T_cloud` |
 | `sunshine_min` | IFS sunshine minutes in the hour |

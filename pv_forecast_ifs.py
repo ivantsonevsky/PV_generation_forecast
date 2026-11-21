@@ -8,6 +8,7 @@ Data
     2t   (param 167) - 2 m temperature [K], used for the module temperature
     lcc, mcc, hcc (params 186/187/188) - low, medium and high cloud cover [0-1]
     tcc  (param 164) - total cloud cover [0-1], used to set the layer overlap
+    10u, 10v (params 165/166) - 10 m wind components [m/s], plotted as wind barbs
   Steps are hourly up to +90 h (Control forecast) has hourly output there) and 3-hourly
   after that, so a 3-day forecast is fully hourly.
 
@@ -105,16 +106,16 @@ def mars_steps(max_step):
 
 
 def retrieve_ifs(base, lat, lon, max_step):
-    """Download sund, 2t, tcc and the cloud layers for a small box around the
+    """Download sund, 2t, 10 m wind, tcc and the cloud layers for a small box around the
     site (cached). Returns the valid times and a dict of point time series."""
     from ecmwfapi import ECMWFService
 
     CACHE_DIR.mkdir(exist_ok=True)
-    target = CACHE_DIR / f"ifs_{base:%Y%m%d%H}_{lat:.2f}_{lon:.2f}_{max_step}_tcc.nc"
+    target = CACHE_DIR / f"ifs_{base:%Y%m%d%H}_{lat:.2f}_{lon:.2f}_{max_step}_tcc_wind.nc"
     if not target.exists():
         request = {
             "class": "od", "stream": "oper", "type": "fc", "expver": "1",
-            "levtype": "sfc", "param": "189/167/186/187/188/164",
+            "levtype": "sfc", "param": "189/167/186/187/188/164/165/166",
             "date": f"{base:%Y-%m-%d}", "time": f"{base:%H}",
             "step": "/".join(map(str, mars_steps(max_step))),
             "area": f"{lat + 0.2}/{lon - 0.2}/{lat - 0.2}/{lon + 0.2}",
@@ -129,6 +130,8 @@ def retrieve_ifs(base, lat, lon, max_step):
     times = pd.DatetimeIndex(p.time.values).tz_localize("UTC")
     ifs = {v: p[v].values.astype(float) for v in ("sund", "lcc", "mcc", "hcc", "tcc")}
     ifs["t2m"] = p.t2m.values.astype(float) - 273.15
+    ifs["u10"] = p.u10.values.astype(float)
+    ifs["v10"] = p.v10.values.astype(float)
     return times, ifs
 
 
@@ -254,6 +257,7 @@ def pv_forecast(times, ifs, arrays, a):
     cosz = np.clip(np.cos(np.radians(zen)), 0, 1)
     t_cloud = np.clip(t_cloud * cosz ** a.zenith_exp, 0, 1)
     tair = at_sub(ifs["t2m"])
+    u10, v10 = at_sub(ifs["u10"]), at_sub(ifs["v10"])
 
     # beam reduction only on partly sunny intervals: none at f=0 or f=1, largest at f=0.5
     k_beam = 1 - (1 - a.k_beam) * 4 * f * (1 - f)
@@ -285,6 +289,9 @@ def pv_forecast(times, ifs, arrays, a):
         "sunshine_frac": f,
         "ghi_wm2": ghi,
         "t2m_c": tair,
+        "wind_ms": np.hypot(u10, v10),
+        "u10_ms": u10,
+        "v10_ms": v10,
         **{f"{layer}_pct": 100 * cover[layer] for layer in CLOUD_TRANSMISSION},
         "cloud_trans": t_cloud,
     }, index=sub)
@@ -302,13 +309,14 @@ def plot(hourly, daily, base, a, arrays, out):
     plt.rcParams.update({"font.size": 10, "axes.edgecolor": grid, "axes.labelcolor": ink2,
                          "xtick.color": ink2, "ytick.color": ink2, "text.color": ink})
 
-    fig = plt.figure(figsize=(11, 9), facecolor=surface)
-    outer = fig.add_gridspec(2, 1, height_ratios=[4.2, 2], hspace=0.42)
-    top = outer[0].subgridspec(2, 1, height_ratios=[3, 1.1], hspace=0.38)
+    fig = plt.figure(figsize=(11, 11.4), facecolor=surface)
+    outer = fig.add_gridspec(2, 1, height_ratios=[6.6, 2], hspace=0.3)
+    top = outer[0].subgridspec(3, 1, height_ratios=[3, 1.1, 2.3], hspace=0.45)
     ax1 = fig.add_subplot(top[0])
     axc = fig.add_subplot(top[1], sharex=ax1)
+    axw = fig.add_subplot(top[2], sharex=ax1)
     ax2 = fig.add_subplot(outer[1])
-    for ax in (ax1, axc, ax2):
+    for ax in (ax1, axc, axw, ax2):
         ax.set_facecolor(surface)
         ax.grid(axis="y", color=grid, linewidth=0.8)
         ax.set_axisbelow(True)
@@ -339,6 +347,7 @@ def plot(hourly, daily, base, a, arrays, out):
     t_edges = mdates.date2num(hourly.index.tz_localize(None).append(
         hourly.index[-1:].tz_localize(None) + pd.Timedelta(hours=1)))
     cover = np.vstack([hourly.lcc_pct, hourly.mcc_pct, hourly.hcc_pct])
+    axc.grid(False)   # before pcolormesh, which would otherwise auto-remove the grid
     mesh = axc.pcolormesh(t_edges, [0, 1, 2, 3], cover, cmap=cmap, vmin=0, vmax=100,
                           shading="flat", edgecolor=surface, linewidth=0.3)
     for d in daily.index[1:]:
@@ -346,7 +355,6 @@ def plot(hourly, daily, base, a, arrays, out):
     axc.set_yticks([0.5, 1.5, 2.5])
     axc.set_yticklabels(["Low", "Medium", "High"])
     axc.set_ylim(0, 3)
-    axc.grid(False)
     axc.set_title("IFS cloud cover", loc="left", fontweight="bold", fontsize=10)
     cax = axc.inset_axes([0.82, 1.1, 0.18, 0.09])
     cb = fig.colorbar(mesh, cax=cax, orientation="horizontal", ticks=[0, 50, 100])
@@ -354,11 +362,44 @@ def plot(hourly, daily, base, a, arrays, out):
     cb.outline.set_visible(False)
     cb.ax.tick_params(length=0, labelsize=8)
     cb.ax.xaxis.set_ticks_position("top")
-    axc.xaxis.set_major_locator(mdates.HourLocator(byhour=12))
-    axc.xaxis.set_major_formatter(mdates.DateFormatter("12:00\n%a %d %b"))
-    axc.xaxis.set_minor_locator(mdates.HourLocator(byhour=[0, 6, 18]))
-    axc.xaxis.set_minor_formatter(mdates.DateFormatter("%H:%M"))
+    axc.xaxis.set_major_locator(mdates.HourLocator(byhour=[0, 6, 12, 18]))
+    axc.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     axc.tick_params(which="both", length=0, labelcolor=ink2)
+
+    # 2 m temperature (line, ticks every 2 degrees) and 10 m wind barbs on top
+    from matplotlib.ticker import MultipleLocator
+    red, violet = "#e34948", "#6250d6"
+    axw.plot(x, hourly.t2m_c, color=red, lw=2.0)
+    lo = np.floor((hourly.t2m_c.min() - 1) / 2) * 2
+    hi = np.ceil((hourly.t2m_c.max() + 1) / 2) * 2
+    span = hi - lo
+    axw.set_ylim(lo, hi + 0.4 * span)             # head room for the wind barbs
+    axw.set_yticks(np.arange(lo, hi + 1e-9, 2))
+    if lo < 0 < hi:                                # mark freezing
+        axw.axhline(0, color=red, lw=0.8, ls=(0, (2, 3)), alpha=0.6)
+    axw.set_ylabel("2 m temperature [°C]", color=red)
+    axw.tick_params(axis="y", colors=red)
+    sel = slice(1, None, 3)                        # one barb every 3 h
+    axw.barbs(x[sel], np.full(len(x[sel]), hi + 0.2 * span),
+              hourly.u10_ms.values[sel], hourly.v10_ms.values[sel],
+              length=6.5, linewidth=1.2, color=violet, pivot="middle",
+              barb_increments=dict(half=2.5, full=5, flag=25))
+    axw.text(1.0, 1.03, "10 m wind barbs [m/s]: half 2.5, full 5, pennant 25",
+             transform=axw.transAxes, ha="right", va="bottom", fontsize=8.5, color=violet)
+    for d in daily.index[1:]:
+        axw.axvline(pd.Timestamp(d), color=grid, lw=1)
+    axw.set_title("IFS temperature and wind", loc="left", fontweight="bold", fontsize=10)
+    # dashed vertical lines every 6 h (midnight already has a solid line)
+    t_first = pd.Timestamp(daily.index[0])
+    for t in pd.date_range(t_first, t_first + pd.Timedelta(days=len(daily)), freq="6h"):
+        if t.hour:
+            for ax in (ax1, axc, axw):
+                ax.axvline(t, color="#8a8984", lw=0.7, ls=(0, (4, 3)), alpha=0.55, zorder=1)
+    axw.xaxis.set_major_locator(mdates.HourLocator(byhour=12))
+    axw.xaxis.set_major_formatter(mdates.DateFormatter("12:00\n%a %d %b"))
+    axw.xaxis.set_minor_locator(mdates.HourLocator(byhour=[0, 6, 18]))
+    axw.xaxis.set_minor_formatter(mdates.DateFormatter("%H:%M"))
+    axw.tick_params(axis="x", which="both", length=0, labelcolor=ink2)
     ncol = 3 if multi else 2
     rows = int(np.ceil((len(arrays) + 2 if multi else 2) / ncol))
     ax1.legend(loc="lower left", frameon=False, ncol=ncol, bbox_to_anchor=(0, 1.0),
@@ -401,8 +442,8 @@ def plot(hourly, daily, base, a, arrays, out):
     loc = f"{abs(a.lat):.2f}°{'N' if a.lat >= 0 else 'S'} {abs(a.lon):.2f}°{'E' if a.lon >= 0 else 'W'}"
     fig.suptitle(f"PV forecast  {loc}  |  {arr_txt}",
                  x=0.06, ha="left", fontsize=13, fontweight="bold")
-    fig.text(0.06, 0.935, f"ECMWF IFS Control {base:%Y-%m-%d %H} UTC run, sunshine duration and low/medium/high "
-             f"cloud cover (hourly steps); "
+    fig.text(0.06, 0.935, f"ECMWF IFS Control {base:%Y-%m-%d %H} UTC run, sunshine duration, cloud cover, "
+             f"2 m temperature and 10 m wind (hourly steps); "
              f"times in {a.tz}", fontsize=9, color=ink2)
     fig.subplots_adjust(left=0.075, right=0.98, top=0.87 - 0.045 * (rows - 1), bottom=0.08)
     fig.savefig(out, dpi=130, facecolor=surface)

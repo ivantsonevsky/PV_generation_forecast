@@ -24,9 +24,9 @@ mv "${SAT_DIR}/.pv_forecast.png.tmp" "${SAT_DIR}/pv_forecast.png"
 # publish_sat.sh waits until a file has been unchanged for SETTLE seconds (15 s).
 # If it is also run from launchd, you can drop the next block and let that run
 # pick the plot up.
-if [ -x "$PUBLISH_SCRIPT" ]; then
-  sleep 16
-  "$PUBLISH_SCRIPT"
-else
-  echo "Plot copied to ${SAT_DIR}; $PUBLISH_SCRIPT not found, it will be published by the next scheduled run"
-fi
+#if [ -x "$PUBLISH_SCRIPT" ]; then
+#  sleep 16
+#  "$PUBLISH_SCRIPT"
+#else
+#  echo "Plot copied to ${SAT_DIR}; $PUBLISH_SCRIPT not found, it will be published by the next scheduled run"
+#fi
